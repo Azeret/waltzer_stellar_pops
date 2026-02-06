@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.cache/
+.DS_Store
+
+# Large binary outputs (regenerate locally)
+*.pickle
+*.tar
+*.zip
+
