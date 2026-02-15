@@ -12,6 +12,8 @@ We will characterize stellar photospheres, activity, and circumstellar environme
 - **True simultaneity across bands:** activity, accretion, and extinction vary on minutes–days; simultaneous NUV+VIS(+NIR) avoids cross-epoch systematics.
 - **Homogeneous survey capability:** a single facility provides consistent spectral resolution (**R ≈ 3000** in NUV and VIS; NIR is photometry) and stable spectrophotometry across a broad target set.
 
+**Context vs other UV missions:** Mauve provides 200–700 nm spectra at low resolution (R~20–65) from a 13 cm telescope, optimized for long time-domain monitoring; WALTzER targets higher-resolution NUV+VIS spectroscopy plus simultaneous NIR photometry for complementary diagnostics. MUSTI is a proposed high-resolution, time-domain **far-UV** mission dedicated to massive stars; WALTzER is complementary by extending to NUV+optical(+NIR) simultaneously and scaling to large cluster samples. citeturn0academia12turn4view0
+
 ## Core science (transmission + emission/reflection spectroscopy support)
 **Stellar contamination and variability** are limiting systematics for exoplanet atmosphere retrievals. WALTzER provides contemporaneous stellar monitoring that can be used to:
 
@@ -28,6 +30,14 @@ We will characterize stellar photospheres, activity, and circumstellar environme
 **B. Exoplanet host star characterization (consortium):** repeat visits for a curated list (Ariel/JWST overlap, temperate small-planet hosts), prioritizing simultaneous activity diagnostics and variability budgets.
 
 **C. Rare/complex objects (consortium):** e.g., Herbig Ae/Be, Be/B[e]-like systems where NUV line forests plus optical emission lines constrain hot circumstellar gas while NIR photometry tracks dust contributions.
+
+## Target categories (proposed)
+In addition to the open-cluster programs, we propose to structure the “stellar characterization” theme around a small number of target categories that map cleanly to WALTzER’s simultaneous NUV+VIS spectroscopy and NIR photometry:
+
+- **Exoplanet host stars (temperate/small-planet emphasis):** homogeneous activity/flare context and contemporaneous stellar spectra to support atmospheric interpretation (Ariel/JWST overlap).
+- **Activity + flares (time domain):** active FGKM dwarfs spanning rotation/age; deliver NUV-to-optical flare color/energy calibrations beyond optical-only monitoring.
+- **Young stars (PMS; accretion/outflow):** K/M T Tauri and Herbig stars in nearby associations/clusters; simultaneous UV/optical diagnostics mitigate variability biases and enable accretion rate constraints.
+- **Massive stars and binaries:** OB stars, interacting binaries, stripped-star candidates, and emission-line systems (Be/B[e])—particularly in young clusters (e.g., ONC)—to connect time-variable winds/circumstellar gas (NUV+optical) with continuum/dust changes (NIR photometry). This is complementary to far-UV dedicated concepts like MUSTI. citeturn4view0turn1search4
 
 ## Feasibility with WALTzER (illustrative ETC simulations)
 We ran the WALTzER ETC on Gaia-selected members in M45, NGC 2632, and ONC assuming **2.5 h** integrations (single visit) and PHOENIX photospheric templates (no reddening applied). The figure below summarizes the achieved depth uncertainties by band; a substantial fraction of cluster members are feasible in VIS for modest precision, while NUV feasibility is restricted to the brightest/least-extincted stars.
@@ -52,4 +62,3 @@ An initial public cluster survey could target **O(10^2)** stars per cluster with
 - UV excess / accretion rate calibration: Calvet & Gullbring (1998, ApJ); Gullbring et al. (1998, ApJ); Herczeg & Hillenbrand (2008, ApJ).
 - Nearly simultaneous UV+optical accretion studies: Ingleby et al. (2013, ApJ).
 - NUV flare emission modeling: Brasseur et al. (2022, ApJ); Kowalski et al. (2024, ApJ).
-
