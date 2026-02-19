@@ -88,8 +88,12 @@ cd ../waltzer_stellar_pops
 - Feasibility summary: `docs/feasibility_summary_phoenix_tdur2p5_nobs1_2026-02-06.md`
 - Work summary: `docs/2026-02-06_stellar_science_work_summary.md`
 
+## Proposal figures (stellar science)
+
+The current proposal-level stellar-science feasibility figures (A4-ready) and the minimal scripts/data needed to reproduce them live in:
+- `stellar_science/README.md`
+
 ## Caveats
 
 - ONC extinction/reddening is **not** modeled in the quick ETC pass; NUV feasibility there is likely optimistic.
 - Neighbor/crowding metrics (`nn_*`) are computed against the Gaia cone-search magnitude limit you choose (`--g-max`). If you want fainter contaminants, re-run with a deeper `--g-max` and then down-select by brightness.
-
