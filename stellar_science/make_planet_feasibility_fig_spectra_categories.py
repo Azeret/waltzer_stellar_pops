@@ -163,6 +163,30 @@ def _import_waltzer_detector():
     )
 
 
+def _import_inst_convolution():
+    try:
+        from waltzer_etc.utils import inst_convolution  # type: ignore
+
+        return inst_convolution
+    except Exception:
+        pass
+
+    here = Path(__file__).resolve()
+    for parent in [here.parent, *here.parents]:
+        src = (parent / "waltzer_etc").resolve()
+        if src.exists():
+            sys.path.insert(0, str(src))
+            from waltzer_etc.utils import inst_convolution  # type: ignore
+
+            return inst_convolution
+
+    raise SystemExit(
+        "Could not import `waltzer_etc.utils.inst_convolution` (needed for --x-layout realistic). "
+        "Install `waltzer_etc` (pip) or place a source checkout named `waltzer_etc/` "
+        "next to this repository."
+    )
+
+
 @lru_cache(maxsize=None)
 def _get_detector(band: str, diameter_cm: float):
     Detector = _import_waltzer_detector()
@@ -266,6 +290,38 @@ def _apply_throughput_to_sed_photons_s_nm(
     y = np.where(thr > 0, y, np.nan)
     y = np.where(np.isfinite(y) & (y > 0), y, np.nan)
     return y
+
+
+def _sed_at_waltzer_resolution(
+    wl_nm: np.ndarray,
+    photons_s_nm: np.ndarray,
+    *,
+    resolution_fwhm: float = 3000.0,
+    sampling_r: float = 6000.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    inst_convolution = _import_inst_convolution()
+    import pyratbay.spectrum as ps  # type: ignore
+
+    wl_nm = np.asarray(wl_nm, dtype=float)
+    photons_s_nm = np.asarray(photons_s_nm, dtype=float)
+    m = np.isfinite(wl_nm) & np.isfinite(photons_s_nm) & (photons_s_nm > 0)
+    wl_nm = wl_nm[m]
+    photons_s_nm = photons_s_nm[m]
+    if len(wl_nm) < 10:
+        return wl_nm, photons_s_nm
+
+    isort = np.argsort(wl_nm)
+    wl_nm = wl_nm[isort]
+    photons_s_nm = photons_s_nm[isort]
+
+    wl_um = wl_nm / 1000.0
+    smooth = inst_convolution(wl_um, photons_s_nm, float(resolution_fwhm))
+
+    wl_out_um = ps.constant_resolution_spectrum(float(np.nanmin(wl_um)), float(np.nanmax(wl_um)), float(sampling_r))
+    wl_out_nm = wl_out_um * 1000.0
+    y_out = np.interp(wl_out_um, wl_um, smooth, left=np.nan, right=np.nan)
+    y_out = np.where(np.isfinite(y_out) & (y_out > 0), y_out, np.nan)
+    return wl_out_nm, y_out
 
 
 def _apply_throughput(tso: dict, band: str, wl_um: np.ndarray, flux_e: np.ndarray, err_e: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -604,8 +660,7 @@ def _plot_nuv_vis_nir_realistic(
     ann_fontsize: float,
     tdur_s: float,
     sed_wl_nm: np.ndarray,
-    sed_photons_entrance_s_nm: np.ndarray,
-    sed_photons_detected_s_nm: np.ndarray,
+    sed_photons_waltzer_s_nm: np.ndarray,
 ) -> None:
     """
     Same content as `_plot_nuv_vis_nir`, but with true wavelength spacing and a grey SED overlay.
@@ -634,14 +689,11 @@ def _plot_nuv_vis_nir_realistic(
     cap = 10.0
 
     sed_wl_nm = np.asarray(sed_wl_nm, dtype=float)
-    sed_photons_entrance_s_nm = np.asarray(sed_photons_entrance_s_nm, dtype=float)
-    sed_photons_detected_s_nm = np.asarray(sed_photons_detected_s_nm, dtype=float)
+    sed_photons_waltzer_s_nm = np.asarray(sed_photons_waltzer_s_nm, dtype=float)
     mx = np.isfinite(sed_wl_nm)
-    y_entr = np.where(np.isfinite(sed_photons_entrance_s_nm) & (sed_photons_entrance_s_nm > 0), sed_photons_entrance_s_nm, np.nan)
-    y_det = np.where(np.isfinite(sed_photons_detected_s_nm) & (sed_photons_detected_s_nm > 0), sed_photons_detected_s_nm, np.nan)
+    y = np.where(np.isfinite(sed_photons_waltzer_s_nm) & (sed_photons_waltzer_s_nm > 0), sed_photons_waltzer_s_nm, np.nan)
     if np.any(mx):
-        ax.plot(sed_wl_nm[mx], y_entr[mx], color="0.75", lw=1.0, zorder=1)
-        ax.plot(sed_wl_nm[mx], y_det[mx], color="0.55", lw=1.0, zorder=1)
+        ax.plot(sed_wl_nm[mx], y[mx], color="0.75", lw=1.0, zorder=1)
 
     def _fill(wl_nm, f, s, color):
         wl_nm = np.asarray(wl_nm, dtype=float)
@@ -706,7 +758,7 @@ def _plot_nuv_vis_nir_realistic(
         ax.tick_params(axis="x", which="both", length=0)
 
     yvals = []
-    for arr in (sed_photons_entrance_s_nm, sed_photons_detected_s_nm, nuv_flux, vis_flux, np.array([nir_flux])):
+    for arr in (sed_photons_waltzer_s_nm, nuv_flux, vis_flux, np.array([nir_flux])):
         a = np.asarray(arr, dtype=float)
         a = a[np.isfinite(a) & (a > 0)]
         if len(a):
@@ -901,14 +953,14 @@ def main() -> None:
             ax = fig.add_subplot(gs[2 * i + 1, j])
             ann_side = "left" if j == 0 else "right"
             if args.x_layout == "realistic":
-                sed_wl_nm, sed_entr = _stellar_sed_photons_s_nm(
+                sed_wl_nm_hr, sed_entr_hr = _stellar_sed_photons_s_nm(
                     teff_k=float(row["st_teff"]),
                     logg=_logg_cgs(float(row.get("st_mass", float("nan"))), float(row.get("st_rad", float("nan")))),
                     vmag=float(row["sy_vmag"]),
                     sed_type=str(args.sed_type),
                     diameter_cm=float(args.diameter_cm),
                 )
-                sed_det = _apply_throughput_to_sed_photons_s_nm(sed_wl_nm, sed_entr, diameter_cm=float(args.diameter_cm))
+                sed_wl_nm, sed_waltzer = _sed_at_waltzer_resolution(sed_wl_nm_hr, sed_entr_hr)
                 _plot_nuv_vis_nir_realistic(
                     ax,
                     nuv=nuv,
@@ -922,8 +974,7 @@ def main() -> None:
                     ann_fontsize=(6.6 if i == 0 else 6.2),
                     tdur_s=tdur_eff_s,
                     sed_wl_nm=sed_wl_nm,
-                    sed_photons_entrance_s_nm=sed_entr,
-                    sed_photons_detected_s_nm=sed_det,
+                    sed_photons_waltzer_s_nm=sed_waltzer,
                 )
             else:
                 _plot_nuv_vis_nir(
@@ -958,7 +1009,7 @@ def main() -> None:
         fig.text(
             0.08,
             0.033,
-            "Light grey: full stellar SED at telescope entrance (V-normalized). Dark grey: same SED with WALTzER throughput. Color: ETC bandpass data.",
+            "Grey: full stellar SED at WALTzER-like resolution (V-normalized; includes detector gaps). Color: ETC bandpass data.",
             ha="left",
             va="bottom",
             fontsize=8,
