@@ -404,10 +404,10 @@ def _stellar_sed_photons_s_nm(
     diameter_cm: float,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Return an intrinsic stellar SED as photon rate density at the detector (throughput applied).
+    Return an intrinsic stellar SED as photon rate density at the telescope entrance (no throughput).
 
     The SED is normalized to Johnson V using the same helper as the ETC.
-    Output units: photons/s/nm detected by WALTzER (instrument throughput applied).
+    Output units: photons/s/nm collected by the primary mirror.
     """
     wsed = _import_waltzer_sed()
     import pyratbay.constants as pc  # type: ignore
@@ -429,9 +429,29 @@ def _stellar_sed_photons_s_nm(
     photons_um = photons_nu * pc.c / (wl_um * pc.um) ** 2.0 * pc.um  # photons/s/um
     photons_nm = photons_um / 1000.0
     wl_nm = wl_um * 1000.0
-    thr = _apply_waltzer_throughput_fraction(wl_um, diameter_cm=float(diameter_cm))
-    photons_nm = photons_nm * np.maximum(thr, 0.0)
+    photons_nm = np.where(np.isfinite(photons_nm) & (photons_nm > 0), photons_nm, np.nan)
     return wl_nm, photons_nm
+
+
+def _apply_throughput_to_sed_photons_s_nm(
+    wl_nm: np.ndarray,
+    photons_s_nm: np.ndarray,
+    *,
+    diameter_cm: float,
+) -> np.ndarray:
+    """
+    Convert telescope-entrance SED photon rate density to *detected* photon rate density.
+    """
+    wl_nm = np.asarray(wl_nm, dtype=float)
+    photons_s_nm = np.asarray(photons_s_nm, dtype=float)
+    wl_um = wl_nm / 1000.0
+    thr = _apply_waltzer_throughput_fraction(wl_um, diameter_cm=float(diameter_cm))
+    thr = np.asarray(thr, dtype=float)
+    y = photons_s_nm * np.maximum(thr, 0.0)
+    # Break the line where the instrument has zero throughput (detector gaps)
+    y = np.where(thr > 0, y, np.nan)
+    y = np.where(np.isfinite(y) & (y > 0), y, np.nan)
+    return y
 
 
 def _plot_nuv_vis_nir(
@@ -699,7 +719,8 @@ def _plot_nuv_vis_nir_realistic(
     tdur_s: float,
     *,
     sed_wl_nm: np.ndarray,
-    sed_photons_s_nm: np.ndarray,
+    sed_photons_entrance_s_nm: np.ndarray,
+    sed_photons_detected_s_nm: np.ndarray,
     ann_side: str = "left",
     sigma_mult: float = 1.0,
     shade_alpha: float = 0.18,
@@ -732,10 +753,14 @@ def _plot_nuv_vis_nir_realistic(
     cap = 10.0
 
     sed_wl_nm = np.asarray(sed_wl_nm, dtype=float)
-    sed_photons_s_nm = np.asarray(sed_photons_s_nm, dtype=float)
-    m = np.isfinite(sed_wl_nm) & np.isfinite(sed_photons_s_nm) & (sed_photons_s_nm > 0)
-    if np.any(m):
-        ax.plot(sed_wl_nm[m], sed_photons_s_nm[m], color="0.65", lw=1.0, zorder=1)
+    sed_photons_entrance_s_nm = np.asarray(sed_photons_entrance_s_nm, dtype=float)
+    sed_photons_detected_s_nm = np.asarray(sed_photons_detected_s_nm, dtype=float)
+    mx = np.isfinite(sed_wl_nm)
+    y_entr = np.where(np.isfinite(sed_photons_entrance_s_nm) & (sed_photons_entrance_s_nm > 0), sed_photons_entrance_s_nm, np.nan)
+    y_det = np.where(np.isfinite(sed_photons_detected_s_nm) & (sed_photons_detected_s_nm > 0), sed_photons_detected_s_nm, np.nan)
+    if np.any(mx):
+        ax.plot(sed_wl_nm[mx], y_entr[mx], color="0.75", lw=1.0, zorder=1)
+        ax.plot(sed_wl_nm[mx], y_det[mx], color="0.55", lw=1.0, zorder=1)
 
     def _fill(wl_nm, f, s, color):
         wl_nm = np.asarray(wl_nm, dtype=float)
@@ -806,7 +831,7 @@ def _plot_nuv_vis_nir_realistic(
 
     # y-limits from data
     yvals = []
-    for arr in (sed_photons_s_nm, nuv_flux, vis_flux, np.array([nir_flux])):
+    for arr in (sed_photons_entrance_s_nm, sed_photons_detected_s_nm, nuv_flux, vis_flux, np.array([nir_flux])):
         a = np.asarray(arr, dtype=float)
         a = a[np.isfinite(a) & (a > 0)]
         if len(a):
@@ -1002,13 +1027,14 @@ def main() -> None:
             eff = float(spec.get("meta", {}).get("efficiency", 1.0))
             tdur_eff_s = t_h * 3600.0 * eff
             if args.x_layout == "realistic":
-                sed_wl_nm, sed_ph = _stellar_sed_photons_s_nm(
+                sed_wl_nm, sed_entr = _stellar_sed_photons_s_nm(
                     teff_k=float(row["st_teff"]),
                     logg=_logg_cgs(float(row.get("st_mass", float("nan"))), float(row.get("st_rad", float("nan")))),
                     vmag=float(row["sy_vmag"]),
                     sed_type=str(args.sed_type),
                     diameter_cm=float(args.diameter_cm),
                 )
+                sed_det = _apply_throughput_to_sed_photons_s_nm(sed_wl_nm, sed_entr, diameter_cm=float(args.diameter_cm))
                 _plot_nuv_vis_nir_realistic(
                     ax,
                     spec["nuv"],
@@ -1017,7 +1043,8 @@ def main() -> None:
                     annotate,
                     tdur_s=tdur_eff_s,
                     sed_wl_nm=sed_wl_nm,
-                    sed_photons_s_nm=sed_ph,
+                    sed_photons_entrance_s_nm=sed_entr,
+                    sed_photons_detected_s_nm=sed_det,
                     ann_side=ann_side,
                     sigma_mult=float(args.sigma_mult),
                     shade_alpha=float(args.shade_alpha),
@@ -1071,7 +1098,7 @@ def main() -> None:
         fig.text(
             0.08,
             0.033,
-            "Grey: full stellar SED scaled to detected photon rate (V-normalized, throughput applied). Color: ETC bandpass data.",
+            "Light grey: full stellar SED at telescope entrance (V-normalized). Dark grey: same SED with WALTzER throughput. Color: ETC bandpass data.",
             ha="left",
             va="bottom",
             fontsize=8,
