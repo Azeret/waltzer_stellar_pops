@@ -39,10 +39,29 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--pickle", default="data/planets/waltzer_snr_planets_phoenix_nobs1.pickle")
     p.add_argument("--out", default="fig_planets_spectra_by_category_variable_t_A4.png")
     p.add_argument(
+        "--x-layout",
+        choices=["compressed", "realistic"],
+        default="compressed",
+        help="X-axis layout: 'compressed' squeezes the detector gaps (proposal style); "
+        "'realistic' uses true wavelength spacing and overlays the full SED in grey.",
+    )
+    p.add_argument(
         "--flux-space",
         choices=["detected", "throughput_corrected"],
         default="detected",
         help="Plot detected counts (throughput included) or throughput-corrected flux (stare-mode output).",
+    )
+    p.add_argument(
+        "--diameter-cm",
+        type=float,
+        default=35.0,
+        help="Telescope diameter (cm) used for the grey SED photon-rate scaling (realistic layout only).",
+    )
+    p.add_argument(
+        "--sed-type",
+        type=str,
+        default="phoenix",
+        help="SED library used for the grey SED overlay (realistic layout only).",
     )
 
     p.add_argument("--tmax-hours", type=float, default=10.0, help="Cap displayed integration time (hours).")
@@ -93,6 +112,82 @@ def _simulate_spectrum_from_source():
         "Could not import `waltzer_etc`. Install it (pip) or place a source checkout "
         "named `waltzer_etc/` next to this repository."
     )
+
+
+def _import_waltzer_sed():
+    try:
+        from waltzer_etc import sed as wsed  # type: ignore
+
+        return wsed
+    except Exception:
+        pass
+
+    here = Path(__file__).resolve()
+    for parent in [here.parent, *here.parents]:
+        src = (parent / "waltzer_etc").resolve()
+        if src.exists():
+            sys.path.insert(0, str(src))
+            from waltzer_etc import sed as wsed  # type: ignore
+
+            return wsed
+
+    raise SystemExit(
+        "Could not import `waltzer_etc.sed` (needed for --x-layout realistic). "
+        "Install `waltzer_etc` (pip) or place a source checkout named `waltzer_etc/` "
+        "next to this repository."
+    )
+
+
+def _logg_cgs(st_mass_msun: float, st_rad_rsun: float) -> float:
+    try:
+        import pyratbay.constants as pc  # type: ignore
+    except Exception:  # pragma: no cover
+        return 4.5
+
+    m = float(st_mass_msun)
+    r = float(st_rad_rsun)
+    if not np.isfinite(m) or not np.isfinite(r) or m <= 0 or r <= 0:
+        return 4.5
+    g = pc.G * (m * pc.msun) / (r * pc.rsun) ** 2.0  # cm/s^2
+    if not np.isfinite(g) or g <= 0:
+        return 4.5
+    return float(np.log10(g))
+
+
+def _stellar_sed_photons_s_nm(
+    *,
+    teff_k: float,
+    logg: float,
+    vmag: float,
+    sed_type: str,
+    diameter_cm: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Return an intrinsic stellar SED as photon rate density at the telescope entrance.
+
+    The SED is normalized to Johnson V using the same helper as the ETC.
+    Output units: photons/s/nm collected by the primary mirror (no instrument throughput).
+    """
+    wsed = _import_waltzer_sed()
+    import pyratbay.constants as pc  # type: ignore
+
+    wl_um, flux = wsed.load_sed(float(teff_k), float(logg), sed_type=str(sed_type))
+    flux = wsed.normalize_vega(wl_um, flux, float(vmag))
+
+    wl_um = np.asarray(wl_um, dtype=float)
+    flux = np.asarray(flux, dtype=float)
+
+    m = np.isfinite(wl_um) & np.isfinite(flux) & (wl_um >= 0.24) & (wl_um <= 1.6) & (flux > 0)
+    wl_um = wl_um[m]
+    flux = flux[m]
+
+    area = np.pi * (0.5 * float(diameter_cm)) ** 2.0  # cm^2
+    photon_energy = pc.h * pc.c / (wl_um * pc.um)  # erg
+    photons_nu = 1e-26 * flux / photon_energy * area  # photons/s/Hz
+    photons_um = photons_nu * pc.c / (wl_um * pc.um) ** 2.0 * pc.um  # photons/s/um
+    photons_nm = photons_um / 1000.0
+    wl_nm = wl_um * 1000.0
+    return wl_nm, photons_nm
 
 
 def _apply_throughput(tso: dict, band: str, wl_um: np.ndarray, flux_e: np.ndarray, err_e: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -417,6 +512,143 @@ def _plot_nuv_vis_nir(
     )
 
 
+def _plot_nuv_vis_nir_realistic(
+    ax,
+    *,
+    nuv,
+    vis,
+    nir,
+    annotate: str,
+    ann_side: str,
+    sigma_mult: float,
+    shade_alpha: float,
+    show_xticklabels: bool,
+    ann_fontsize: float,
+    tdur_s: float,
+    sed_wl_nm: np.ndarray,
+    sed_photons_s_nm: np.ndarray,
+) -> None:
+    """
+    Same content as `_plot_nuv_vis_nir`, but with true wavelength spacing and a grey SED overlay.
+    """
+    nuv_wl_nm = np.asarray(nuv["wl"], dtype=float) * 1000.0
+    vis_wl_nm = np.asarray(vis["wl"], dtype=float) * 1000.0
+    nir_wl_nm = float(np.asarray(nir["wl"], dtype=float).ravel()[0]) * 1000.0
+
+    tdur_s = float(max(tdur_s, 1.0))
+
+    nuv_width_nm = 2.0 * np.asarray(nuv["half_widths"], dtype=float) * 1000.0
+    vis_width_nm = 2.0 * np.asarray(vis["half_widths"], dtype=float) * 1000.0
+    nir_hw_nm = float(np.asarray(nir["half_widths"], dtype=float).ravel()[0] * 1000.0)
+    nir_width_nm = 2.0 * max(nir_hw_nm, 1e-12)
+
+    nuv_flux = np.asarray(nuv["flux"], dtype=float) / np.maximum(nuv_width_nm, 1e-12)
+    vis_flux = np.asarray(vis["flux"], dtype=float) / np.maximum(vis_width_nm, 1e-12)
+    nir_flux = float(np.asarray(nir["flux"], dtype=float).ravel()[0]) / max(nir_width_nm, 1e-12)
+
+    nuv_sig = np.sqrt(np.maximum(np.asarray(nuv["variance"], dtype=float), 0.0) / tdur_s) / np.maximum(nuv_width_nm, 1e-12)
+    vis_sig = np.sqrt(np.maximum(np.asarray(vis["variance"], dtype=float), 0.0) / tdur_s) / np.maximum(vis_width_nm, 1e-12)
+    nir_sig = float(np.sqrt(max(float(np.asarray(nir["variance"], dtype=float).ravel()[0]), 0.0) / tdur_s)) / max(nir_width_nm, 1e-12)
+
+    sigma_mult = float(max(float(sigma_mult), 0.0))
+    shade_alpha = float(min(max(float(shade_alpha), 0.0), 1.0))
+    cap = 10.0
+
+    sed_wl_nm = np.asarray(sed_wl_nm, dtype=float)
+    sed_photons_s_nm = np.asarray(sed_photons_s_nm, dtype=float)
+    m = np.isfinite(sed_wl_nm) & np.isfinite(sed_photons_s_nm) & (sed_photons_s_nm > 0)
+    if np.any(m):
+        ax.plot(sed_wl_nm[m], sed_photons_s_nm[m], color="0.65", lw=1.0, zorder=1)
+
+    def _fill(wl_nm, f, s, color):
+        wl_nm = np.asarray(wl_nm, dtype=float)
+        f = np.asarray(f, dtype=float)
+        s = np.asarray(s, dtype=float) * sigma_mult
+        f_pos = np.maximum(f, 1e-12)
+        lo = np.maximum(f_pos - s, f_pos / cap)
+        hi = np.minimum(f_pos + s, f_pos * cap)
+        hi = np.maximum(hi, lo * 1.0001)
+        ax.fill_between(wl_nm, lo, hi, color=color, alpha=shade_alpha, linewidth=0, zorder=2)
+        ax.plot(wl_nm, f_pos, color=color, lw=0.9, zorder=3)
+        capped = (f_pos - s < f_pos / cap) | (f_pos + s > f_pos * cap)
+        return capped
+
+    nuv_capped = _fill(nuv_wl_nm, nuv_flux, nuv_sig, "tab:blue")
+    vis_capped = _fill(vis_wl_nm, vis_flux, vis_sig, "tab:orange")
+
+    nuv0, nuv1 = float(np.nanmin(nuv_wl_nm)), float(np.nanmax(nuv_wl_nm))
+    vis0, vis1 = float(np.nanmin(vis_wl_nm)), float(np.nanmax(vis_wl_nm))
+    nir0, nir1 = nir_wl_nm - nir_hw_nm, nir_wl_nm + nir_hw_nm
+
+    ax.axvspan(nuv0, nuv1, color="tab:blue", alpha=0.05, linewidth=0, zorder=0)
+    ax.axvspan(vis0, vis1, color="tab:orange", alpha=0.05, linewidth=0, zorder=0)
+    ax.axvspan(nir0, nir1, color="tab:purple", alpha=0.04, linewidth=0, zorder=0)
+    for x in (nuv1, vis0, vis1, nir0):
+        ax.axvline(x, color="0.70", lw=0.6, zorder=0)
+
+    if np.isfinite(nir_flux) and nir_flux > 0:
+        ax.errorbar(
+            [nir_wl_nm],
+            [nir_flux],
+            xerr=[nir_hw_nm],
+            yerr=[nir_sig] if np.isfinite(nir_sig) else None,
+            fmt="o",
+            ms=3.8,
+            color="tab:purple",
+            ecolor="tab:purple",
+            elinewidth=1.4,
+            capsize=2.0,
+            zorder=4,
+        )
+
+    y_strip = 0.02
+    if np.any(nuv_capped):
+        ax.scatter(nuv_wl_nm[nuv_capped], np.full(np.sum(nuv_capped), y_strip), s=4, color="tab:red", alpha=0.55,
+                   transform=ax.get_xaxis_transform(), linewidths=0, zorder=5)
+    if np.any(vis_capped):
+        ax.scatter(vis_wl_nm[vis_capped], np.full(np.sum(vis_capped), y_strip), s=4, color="tab:red", alpha=0.55,
+                   transform=ax.get_xaxis_transform(), linewidths=0, zorder=5)
+
+    ax.set_xlim(240.0, 1600.0)
+    ax.set_yscale("log")
+    ax.grid(alpha=0.22)
+    ax.tick_params(axis="both", labelsize=7.5)
+    if show_xticklabels:
+        xt = [250, 300, int(round(nuv1)), int(round(vis0)), 600, int(round(vis1)), int(round(nir0)), 1250, int(round(nir1))]
+        xt = sorted({x for x in xt if 240 <= x <= 1600})
+        ax.set_xticks(xt)
+        ax.set_xticklabels([str(int(x)) for x in xt], fontsize=8)
+    else:
+        ax.set_xticklabels([])
+        ax.tick_params(axis="x", which="both", length=0)
+
+    yvals = []
+    for arr in (sed_photons_s_nm, nuv_flux, vis_flux, np.array([nir_flux])):
+        a = np.asarray(arr, dtype=float)
+        a = a[np.isfinite(a) & (a > 0)]
+        if len(a):
+            yvals.append(np.nanmin(a))
+            yvals.append(np.nanmax(a))
+    if yvals:
+        y_min = float(np.nanmin(yvals))
+        y_max = float(np.nanmax(yvals))
+        if y_min > 0 and y_max > y_min:
+            ax.set_ylim(y_min * 0.12, y_max * 2.5)
+
+    ha = {"left": "left", "right": "right", "center": "center"}.get(ann_side, "left")
+    x0 = {"left": 0.02, "center": 0.50, "right": 0.98}.get(ann_side, 0.02)
+    ax.text(
+        x0,
+        0.02,
+        annotate,
+        transform=ax.transAxes,
+        fontsize=float(ann_fontsize),
+        ha=ha,
+        va="bottom",
+        bbox=dict(boxstyle="round,pad=0.16", fc="white", ec="none", alpha=0.9),
+    )
+
+
 def main() -> None:
     args = _parse_args()
     _set_mpl_cache()
@@ -585,20 +817,44 @@ def main() -> None:
 
             ax = fig.add_subplot(gs[2 * i + 1, j])
             ann_side = "left" if j == 0 else "right"
-            _plot_nuv_vis_nir(
-                ax,
-                nuv=nuv,
-                vis=vis,
-                nir=nir,
-                annotate=annotate,
-                ann_side=ann_side,
-                sigma_mult=float(args.sigma_mult),
-                shade_alpha=float(args.shade_alpha),
-                show_xticklabels=(i == len(categories) - 1),
-                ann_fontsize=(6.6 if i == 0 else 6.2),
-                # Scale uncertainties with *effective* integration time (duty cycle).
-                tdur_s=tdur_eff_s,
-            )
+            if args.x_layout == "realistic":
+                sed_wl_nm, sed_ph = _stellar_sed_photons_s_nm(
+                    teff_k=float(row["st_teff"]),
+                    logg=_logg_cgs(float(row.get("st_mass", float("nan"))), float(row.get("st_rad", float("nan")))),
+                    vmag=float(row["sy_vmag"]),
+                    sed_type=str(args.sed_type),
+                    diameter_cm=float(args.diameter_cm),
+                )
+                _plot_nuv_vis_nir_realistic(
+                    ax,
+                    nuv=nuv,
+                    vis=vis,
+                    nir=nir,
+                    annotate=annotate,
+                    ann_side=ann_side,
+                    sigma_mult=float(args.sigma_mult),
+                    shade_alpha=float(args.shade_alpha),
+                    show_xticklabels=(i == len(categories) - 1),
+                    ann_fontsize=(6.6 if i == 0 else 6.2),
+                    tdur_s=tdur_eff_s,
+                    sed_wl_nm=sed_wl_nm,
+                    sed_photons_s_nm=sed_ph,
+                )
+            else:
+                _plot_nuv_vis_nir(
+                    ax,
+                    nuv=nuv,
+                    vis=vis,
+                    nir=nir,
+                    annotate=annotate,
+                    ann_side=ann_side,
+                    sigma_mult=float(args.sigma_mult),
+                    shade_alpha=float(args.shade_alpha),
+                    show_xticklabels=(i == len(categories) - 1),
+                    ann_fontsize=(6.6 if i == 0 else 6.2),
+                    # Scale uncertainties with *effective* integration time (duty cycle).
+                    tdur_s=tdur_eff_s,
+                )
             if i < len(categories) - 1:
                 ax.set_xlabel("")
             else:

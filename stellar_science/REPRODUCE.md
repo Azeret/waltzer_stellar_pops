@@ -17,14 +17,8 @@ This folder is intentionally kept minimal: it contains **only** the scripts + in
 **ETC-derived table + spectra**
 - `stellar_science/data/etc/feasibility_phoenix_tdur2p5_nobs1_merged.csv`
   - contains Gaia-derived target metadata + ETC SNR summaries (baseline 2.5 h)
-- `stellar_science/data/etc/waltzer_snr_phoenix_tdur2p5_nobs1.csv`
-  - raw ETC output (band summary stats)
-
-**Large ETC pickle (not committed to git)**
 - `stellar_science/data/etc/waltzer_snr_phoenix_tdur2p5_nobs1.pickle`
   - per-wavelength spectra + variances used to render the NUV/VIS spectra panels
-  - this file is **large** and is excluded by `.gitignore` (`*.pickle`)
-  - to regenerate it, run the ETC as described below
 
 **Gaia histogram cache (optional but recommended)**
 - `stellar_science/data/gaia_hist_snrproxy/`
@@ -36,10 +30,7 @@ This folder is intentionally kept minimal: it contains **only** the scripts + in
 Script:
 - `stellar_science/make_feasibility_fig_spectra_categories.py`
 
-Prerequisite (only if you want to re-generate the spectra panels):
-- the ETC pickle `stellar_science/data/etc/waltzer_snr_phoenix_tdur2p5_nobs1.pickle` must exist
-
-Run (will fail if the pickle is missing):
+Run:
 ```bash
 python stellar_science/make_feasibility_fig_spectra_categories.py \
   --merged-csv stellar_science/data/etc/feasibility_phoenix_tdur2p5_nobs1_merged.csv \
@@ -47,14 +38,13 @@ python stellar_science/make_feasibility_fig_spectra_categories.py \
   --out stellar_science/fig_spectra_by_category_variable_t_A4.png
 ```
 
-How to (re)generate the ETC outputs (CSV + pickle):
-- install the ETC from `https://github.com/pcubillos/waltzer_etc`
-- ensure the stellar SED libraries are downloaded into the ETC’s expected folders
-- run, from a Python environment where `waltz` is available:
+Realistic wavelength spacing + full-SED overlay:
 ```bash
-waltz stellar_science/_archive/targets_open_clusters.csv \
-  stellar_science/data/etc/waltzer_snr_phoenix_tdur2p5_nobs1.csv \
-  --sed phoenix --tdur 2.5 --nobs 1 --diam 35 --eff 0.6
+python stellar_science/make_feasibility_fig_spectra_categories.py \
+  --merged-csv stellar_science/data/etc/feasibility_phoenix_tdur2p5_nobs1_merged.csv \
+  --pickle stellar_science/data/etc/waltzer_snr_phoenix_tdur2p5_nobs1.pickle \
+  --x-layout realistic \
+  --out stellar_science/fig_spectra_by_category_variable_t_realx_A4.png
 ```
 
 Assumptions encoded in the figure (proposal defaults):
@@ -90,7 +80,7 @@ python stellar_science/gaia_allsky_vdist_density_reachability_snrproxy.py \
   --etc-merged stellar_science/data/etc/feasibility_phoenix_tdur2p5_nobs1_merged.csv \
   --cache-dir stellar_science/data/gaia_hist_snrproxy \
   --out-prefix stellar_science/fig_gaia_allsky_vdist_density_reach_snrproxy_A4 \
-  --out-md /tmp/gaia_allsky_vdist_density_reachability_snrproxy.md
+  --out-md stellar_science/_archive/gaia_allsky_vdist_density_reachability_snrproxy.md
 ```
 
 What “reachable in all bands” means in this figure:
@@ -154,15 +144,16 @@ Both scripts use standard scientific Python:
 Figure 2 additionally needs:
 - `astroquery` (only if you need to refresh the Gaia histogram cache)
 
-## Exoplanet targets: population + visibility + ETC spectra (from `waltzer_planets.xlsx`)
+## Exoplanet targets: population + visibility (from `waltzer_planets.xlsx`)
 
-This produces three figures for the targets in `stellar_science/waltzer_planets.xlsx`:
+This produces two figures for the targets in `stellar_science/waltzer_planets.xlsx`:
 - `stellar_science/fig_planets_population_snr_A4.png` (+ `.pdf`)
 - `stellar_science/fig_planets_visibility_2026_A4.png` (+ `.pdf`)
 - `stellar_science/fig_planets_spectra_by_category_variable_t_A4.png` (+ `.pdf`)
+- `stellar_science/fig_planets_spectra_by_category_variable_t_realx_A4.png` (+ `.pdf`)
 
 It also writes intermediate products to:
-- `stellar_science/data/planets/` (note: `*.pickle` is excluded by `.gitignore`)
+- `stellar_science/data/planets/`
 
 Run (recommended via a local venv so `openpyxl` is available for `.xlsx`):
 ```bash
@@ -172,6 +163,14 @@ stellar_science/.venv/bin/python stellar_science/make_planet_targets_population_
 stellar_science/.venv/bin/python stellar_science/make_planet_feasibility_fig_spectra_categories.py
 ```
 
+Planet-host spectra with realistic wavelength spacing + full-SED overlay:
+```bash
+stellar_science/.venv/bin/python stellar_science/make_planet_feasibility_fig_spectra_categories.py \
+  --x-layout realistic \
+  --out stellar_science/fig_planets_spectra_by_category_variable_t_realx_A4.png
+```
+
 Notes:
-- These scripts use the WALTzER ETC (`waltzer_etc`). Either install it in the same environment, or keep a source checkout named `waltzer_etc/` next to this repository.
+- The script runs the ETC stage-1 using the local sibling repo `waltzer_etc/` (it is imported from source; not pip-installed).
+- Visibility is Sun-angle only (default: year 2026, min Sun separation 110°).
 - Population “reachability” is computed by tuning the number of stacked transits per target assuming `S/N ∝ √t`, using the same per-band SNR thresholds as the stellar-science plots (category-dependent).
