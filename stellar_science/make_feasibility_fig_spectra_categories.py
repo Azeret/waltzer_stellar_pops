@@ -33,6 +33,7 @@ import argparse
 import os
 import pickle
 from pathlib import Path
+from functools import lru_cache
 
 import numpy as np
 import pandas as pd
@@ -317,6 +318,67 @@ def _import_waltzer_sed():
     )
 
 
+def _import_waltzer_detector():
+    try:
+        from waltzer_etc.snr_waltzer import Detector  # type: ignore
+
+        return Detector
+    except Exception:
+        pass
+
+    here = Path(__file__).resolve()
+    for parent in [here.parent, *here.parents]:
+        src = (parent / "waltzer_etc").resolve()
+        if src.exists():
+            import sys
+
+            sys.path.insert(0, str(src))
+            from waltzer_etc.snr_waltzer import Detector  # type: ignore
+
+            return Detector
+
+    raise SystemExit(
+        "Could not import `waltzer_etc.snr_waltzer.Detector` (needed for --x-layout realistic). "
+        "Install `waltzer_etc` (pip) or place a source checkout named `waltzer_etc/` "
+        "next to this repository."
+    )
+
+
+@lru_cache(maxsize=None)
+def _get_detector(band: str, diameter_cm: float):
+    Detector = _import_waltzer_detector()
+    return Detector(band, diameter=float(diameter_cm), hires=48_000)
+
+
+def _apply_waltzer_throughput_fraction(
+    wl_um: np.ndarray,
+    *,
+    diameter_cm: float,
+) -> np.ndarray:
+    """
+    Return the dimensionless instrument throughput (0..1-ish) as a function of wavelength.
+
+    Implemented by evaluating the ETC detector throughput curves and dividing out
+    the geometric collecting area (the ETC stores throughput × area).
+    """
+    wl_um = np.asarray(wl_um, dtype=float)
+    nuv = _get_detector("nuv", float(diameter_cm))
+    vis = _get_detector("vis", float(diameter_cm))
+    nir = _get_detector("nir", float(diameter_cm))
+
+    area = float(nuv.primary_area)
+    if not np.isfinite(area) or area <= 0:
+        area = np.pi * (0.5 * float(diameter_cm)) ** 2.0
+
+    def frac(det) -> np.ndarray:
+        resp = np.asarray(det.throughput(wl_um), dtype=float) / max(area, 1e-12)
+        m = (wl_um >= float(det.wl_min)) & (wl_um <= float(det.wl_max))
+        return np.where(m, resp, 0.0)
+
+    # Non-overlapping bands; sum is safe and yields 0 in the gaps.
+    return frac(nuv) + frac(vis) + frac(nir)
+
+
 def _logg_cgs(st_mass_msun: float, st_rad_rsun: float) -> float:
     try:
         import pyratbay.constants as pc  # type: ignore
@@ -342,10 +404,10 @@ def _stellar_sed_photons_s_nm(
     diameter_cm: float,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Return an intrinsic stellar SED as photon rate density at the telescope entrance.
+    Return an intrinsic stellar SED as photon rate density at the detector (throughput applied).
 
     The SED is normalized to Johnson V using the same helper as the ETC.
-    Output units: photons/s/nm collected by the primary mirror (no instrument throughput).
+    Output units: photons/s/nm detected by WALTzER (instrument throughput applied).
     """
     wsed = _import_waltzer_sed()
     import pyratbay.constants as pc  # type: ignore
@@ -367,6 +429,8 @@ def _stellar_sed_photons_s_nm(
     photons_um = photons_nu * pc.c / (wl_um * pc.um) ** 2.0 * pc.um  # photons/s/um
     photons_nm = photons_um / 1000.0
     wl_nm = wl_um * 1000.0
+    thr = _apply_waltzer_throughput_fraction(wl_um, diameter_cm=float(diameter_cm))
+    photons_nm = photons_nm * np.maximum(thr, 0.0)
     return wl_nm, photons_nm
 
 
@@ -1003,6 +1067,16 @@ def main() -> None:
         fontsize=8,
         color="0.35",
     )
+    if args.x_layout == "realistic":
+        fig.text(
+            0.08,
+            0.033,
+            "Grey: full stellar SED scaled to detected photon rate (V-normalized, throughput applied). Color: ETC bandpass data.",
+            ha="left",
+            va="bottom",
+            fontsize=8,
+            color="0.35",
+        )
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
