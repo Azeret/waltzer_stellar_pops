@@ -153,3 +153,25 @@ Both scripts use standard scientific Python:
 
 Figure 2 additionally needs:
 - `astroquery` (only if you need to refresh the Gaia histogram cache)
+
+## Exoplanet targets: population + visibility + ETC spectra (from `waltzer_planets.xlsx`)
+
+This produces three figures for the targets in `stellar_science/waltzer_planets.xlsx`:
+- `stellar_science/fig_planets_population_snr_A4.png` (+ `.pdf`)
+- `stellar_science/fig_planets_visibility_2026_A4.png` (+ `.pdf`)
+- `stellar_science/fig_planets_spectra_by_category_variable_t_A4.png` (+ `.pdf`)
+
+It also writes intermediate products to:
+- `stellar_science/data/planets/` (note: `*.pickle` is excluded by `.gitignore`)
+
+Run (recommended via a local venv so `openpyxl` is available for `.xlsx`):
+```bash
+python -m venv --system-site-packages stellar_science/.venv
+stellar_science/.venv/bin/python -m pip install openpyxl synphot pyratbay
+stellar_science/.venv/bin/python stellar_science/make_planet_targets_population_visibility.py
+stellar_science/.venv/bin/python stellar_science/make_planet_feasibility_fig_spectra_categories.py
+```
+
+Notes:
+- These scripts use the WALTzER ETC (`waltzer_etc`). Either install it in the same environment, or keep a source checkout named `waltzer_etc/` next to this repository.
+- Population “reachability” is computed by tuning the number of stacked transits per target assuming `S/N ∝ √t`, using the same per-band SNR thresholds as the stellar-science plots (category-dependent).
