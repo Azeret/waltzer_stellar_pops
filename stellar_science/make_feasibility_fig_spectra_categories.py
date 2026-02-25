@@ -316,10 +316,14 @@ def _plot_nuv_vis_nir(
     vis_sig = np.sqrt(np.maximum(np.asarray(vis["variance"], dtype=float), 0.0) / tdur_s) / np.maximum(vis_width_nm, 1e-12)
     nir_sig = float(np.sqrt(max(float(nir["variance"][0]), 0.0) / tdur_s)) / max(nir_width_nm, 1e-12)
 
-    # Piecewise x mapping (axis units) with compressed gaps
-    nuv0, nuv1 = 240.0, 320.0
-    vis0, vis1 = 425.0, 797.0
-    nir0, nir1 = 900.0, 1600.0
+    # Piecewise x mapping (axis units) with compressed gaps.
+    # Use the *actual* detector coverage from the ETC pickle so the plotted
+    # spectra start at the band edges (avoids apparent offsets).
+    nuv0, nuv1 = float(np.nanmin(nuv_wl_nm)), float(np.nanmax(nuv_wl_nm))
+    vis0, vis1 = float(np.nanmin(vis_wl_nm)), float(np.nanmax(vis_wl_nm))
+    # NIR is a single broad photometric band plotted as one point.
+    nir_hw_nm = float(np.asarray(nir["half_widths"], dtype=float)[0] * 1000.0)
+    nir0, nir1 = nir_wl_nm - nir_hw_nm, nir_wl_nm + nir_hw_nm
     # Relative widths on the x-axis (arbitrary units) to make the panel compact.
     # Keep NIR *much* narrower (it's photometry) so it doesn't dominate x-range.
     W_nuv, W_vis, W_nir = 1.00, 1.60, 0.42
@@ -469,7 +473,16 @@ def _plot_nuv_vis_nir(
                    transform=ax.get_xaxis_transform(), linewidths=0)
 
     # Custom ticks labelled in true wavelength (nm)
-    tick_nm = [240, 320, 425, 600, 797, 900, 1250, 1600]
+    tick_nm = [
+        int(round(nuv0)),
+        int(round(nuv1)),
+        int(round(vis0)),
+        600,
+        int(round(vis1)),
+        int(round(nir0)),
+        1250,
+        int(round(nir1)),
+    ]
     xt = [float(xmap([t])[0]) for t in tick_nm]
     ax.set_xticks(xt)
     labels = ax.set_xticklabels([str(t) for t in tick_nm], fontsize=8)
