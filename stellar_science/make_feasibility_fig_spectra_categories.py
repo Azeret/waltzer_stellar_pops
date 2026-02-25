@@ -679,7 +679,10 @@ def main() -> None:
                 spec["vis"],
                 spec["nir"],
                 annotate,
-                tdur_s=t_h * 3600.0,
+                # Scale uncertainties with *effective* integration time (duty cycle).
+                # The stage-1 ETC stores flux/variance as rates; efficiency reduces
+                # the collected electrons for a fixed wall-clock duration.
+                tdur_s=t_h * 3600.0 * float(spec.get("meta", {}).get("efficiency", 1.0)),
                 ann_side=ann_side,
                 sigma_mult=float(args.sigma_mult),
                 shade_alpha=float(args.shade_alpha),

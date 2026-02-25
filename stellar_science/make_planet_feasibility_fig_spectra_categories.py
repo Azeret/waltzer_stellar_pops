@@ -185,147 +185,224 @@ def _plot_nuv_vis_nir(
     nuv,
     vis,
     nir,
-    tint_s: float,
     annotate: str,
     ann_side: str,
     sigma_mult: float,
     shade_alpha: float,
     show_xticklabels: bool,
     ann_fontsize: float,
+    tdur_s: float,
 ) -> None:
     """
-    Plot NUV+VIS spectra and a single NIR point with uncertainty shading.
+    Plot NUV + VIS spectra with a *compressed* x-axis gap and add the NIR photometric band.
+
+    We compress the empty wavelength ranges (320–425 nm and 797–900 nm) so the
+    three channels fit compactly without overlaps.
 
     Inputs `nuv/vis/nir` are dictionaries with:
-      - wl (micron), flux (e- collected), err (e- collected), half_widths (micron).
+      - wl (micron), flux (e-/s), variance (e-/s), half_widths (micron).
     """
-    import matplotlib.pyplot as plt  # noqa: E402
+    # Convert to nm for x-axis labeling
+    nuv_wl_nm = nuv["wl"] * 1000.0
+    vis_wl_nm = vis["wl"] * 1000.0
+    nir_wl_nm = float(nir["wl"][0] * 1000.0)
 
-    def per_nm(band: dict) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        wl_nm = np.asarray(band["wl"], dtype=float) * 1000.0
-        hw_nm = np.asarray(band["half_widths"], dtype=float) * 1000.0
-        width_nm = 2.0 * np.maximum(hw_nm, 1e-12)
-        flux = np.asarray(band["flux"], dtype=float) / max(tint_s, 1e-9) / width_nm
-        sig = np.asarray(band["err"], dtype=float) / max(tint_s, 1e-9) / width_nm
-        return wl_nm, flux, sig
+    tdur_s = float(max(tdur_s, 1.0))
 
-    nuv_wl_nm, nuv_f, nuv_s = per_nm(nuv)
-    vis_wl_nm, vis_f, vis_s = per_nm(vis)
+    # Convert from electrons/s per bin to rate density e-/s/nm so NUV/VIS (R~6000 bins)
+    # and NIR (wide photometric band) are comparable on a single y-axis.
+    nuv_width_nm = 2.0 * np.asarray(nuv["half_widths"], dtype=float) * 1000.0
+    vis_width_nm = 2.0 * np.asarray(vis["half_widths"], dtype=float) * 1000.0
+    nir_width_nm = float(2.0 * np.asarray(nir["half_widths"], dtype=float)[0] * 1000.0)
 
-    nir_wl_um = np.asarray(nir["wl"], dtype=float).ravel()
-    nir_hw_um = np.asarray(nir["half_widths"], dtype=float).ravel()
-    nir_flux_e = np.asarray(nir["flux"], dtype=float).ravel()
-    nir_err_e = np.asarray(nir["err"], dtype=float).ravel()
-    nir_wl_nm = float(nir_wl_um[0]) * 1000.0
-    nir_hw_nm = float(nir_hw_um[0]) * 1000.0
-    nir_w_nm = 2.0 * max(nir_hw_nm, 1e-12)
-    nir_f = float(nir_flux_e[0]) / max(tint_s, 1e-9) / nir_w_nm
-    nir_s = float(nir_err_e[0]) / max(tint_s, 1e-9) / nir_w_nm
+    nuv_flux = np.asarray(nuv["flux"], dtype=float) / np.maximum(nuv_width_nm, 1e-12)
+    vis_flux = np.asarray(vis["flux"], dtype=float) / np.maximum(vis_width_nm, 1e-12)
+    nir_flux = float(nir["flux"][0]) / max(nir_width_nm, 1e-12)
 
-    # Piecewise x mapping with gaps (same visual grammar as the stellar-case figure).
-    nuv0, nuv1 = float(np.nanmin(nuv_wl_nm)), float(np.nanmax(nuv_wl_nm))
-    vis0, vis1 = float(np.nanmin(vis_wl_nm)), float(np.nanmax(vis_wl_nm))
-    nir0, nir1 = nir_wl_nm - nir_hw_nm, nir_wl_nm + nir_hw_nm
+    # Uncertainty of the *rate* over an exposure time t:
+    #   sigma_rate = sqrt(var_rate * t) / t = sqrt(var_rate / t)
+    nuv_sig = np.sqrt(np.maximum(np.asarray(nuv["variance"], dtype=float), 0.0) / tdur_s) / np.maximum(nuv_width_nm, 1e-12)
+    vis_sig = np.sqrt(np.maximum(np.asarray(vis["variance"], dtype=float), 0.0) / tdur_s) / np.maximum(vis_width_nm, 1e-12)
+    nir_sig = float(np.sqrt(max(float(nir["variance"][0]), 0.0) / tdur_s)) / max(nir_width_nm, 1e-12)
 
-    gap1 = 0.09
-    gap2 = 0.12
-    W_nuv = 0.43
-    W_vis = 0.45
-    W_nir = 0.12
+    # Piecewise x mapping (axis units) with compressed gaps
+    nuv0, nuv1 = 240.0, 320.0
+    vis0, vis1 = 425.0, 797.0
+    nir0, nir1 = 900.0, 1600.0
+    # Relative widths on the x-axis (arbitrary units) to make the panel compact.
+    # Keep NIR *much* narrower (it's photometry) so it doesn't dominate x-range.
+    W_nuv, W_vis, W_nir = 1.00, 1.60, 0.42
+    # Gaps between channels (compressed empty wavelength ranges)
+    # Slightly widened to prevent tick-label overlap at the boundaries.
+    gap1, gap2 = 0.040, 0.040
+    s_nuv = W_nuv / (nuv1 - nuv0)
+    s_vis = W_vis / (vis1 - vis0)
+    s_nir = W_nir / (nir1 - nir0)
 
+    x_nuv_start = 0.0
     x_nuv_end = W_nuv
     x_vis_start = x_nuv_end + gap1
     x_vis_end = x_vis_start + W_vis
     x_nir_start = x_vis_end + gap2
     x_nir_end = x_nir_start + W_nir
 
-    s_nuv = W_nuv / max(nuv1 - nuv0, 1e-9)
-    s_vis = W_vis / max(vis1 - vis0, 1e-9)
-    s_nir = W_nir / max(nir1 - nir0, 1e-9)
-
-    def xmap(wl_nm: np.ndarray) -> np.ndarray:
-        wl_nm = np.asarray(wl_nm, dtype=float)
-        x = np.full_like(wl_nm, np.nan, dtype=float)
-        m = (wl_nm >= nuv0) & (wl_nm <= nuv1)
-        x[m] = (wl_nm[m] - nuv0) * s_nuv
-        m = (wl_nm >= vis0) & (wl_nm <= vis1)
-        x[m] = x_vis_start + (wl_nm[m] - vis0) * s_vis
-        m = (wl_nm >= nir0) & (wl_nm <= nir1)
-        x[m] = x_nir_start + (wl_nm[m] - nir0) * s_nir
+    def xmap(wl_nm):
+        w = np.asarray(wl_nm, dtype=float)
+        x = np.full_like(w, np.nan, dtype=float)
+        m = (w >= nuv0) & (w <= nuv1)
+        x[m] = x_nuv_start + (w[m] - nuv0) * s_nuv
+        m = (w >= vis0) & (w <= vis1)
+        x[m] = x_vis_start + (w[m] - vis0) * s_vis
+        m = (w >= nir0) & (w <= nir1)
+        x[m] = x_nir_start + (w[m] - nir0) * s_nir
         return x
 
-    # Shading with cap for readability (mark clipped bins with red dots).
-    cap_factor = 10.0
+    sigma_mult = float(max(sigma_mult, 0.0))
+    shade_alpha = float(min(max(shade_alpha, 0.0), 1.0))
 
-    def fill(x: np.ndarray, f: np.ndarray, s: np.ndarray, color: str):
-        x = np.asarray(x, dtype=float)
+    # Uncertainty shading is ±(sigma_mult × 1σ), but cap it for readability (low-SNR bins can explode).
+    cap = 10.0
+
+    def _fill(x, f, s, color):
         f = np.asarray(f, dtype=float)
-        s = np.asarray(s, dtype=float)
-        lo = f - sigma_mult * s
-        hi = f + sigma_mult * s
-        lo_cap = np.maximum(lo, f / cap_factor)
-        hi_cap = np.minimum(hi, f * cap_factor)
-        clipped = (lo_cap != lo) | (hi_cap != hi)
-        ax.fill_between(x, lo_cap, hi_cap, color=color, alpha=shade_alpha, linewidth=0)
-        return clipped
+        s = np.asarray(s, dtype=float) * sigma_mult
+        f_pos = np.maximum(f, 1e-12)
+        lo = np.maximum(f_pos - s, f_pos / cap)
+        hi = np.minimum(f_pos + s, f_pos * cap)
+        hi = np.maximum(hi, lo * 1.0001)
+        ax.fill_between(x, lo, hi, color=color, alpha=shade_alpha, linewidth=0)
+        ax.plot(x, f_pos, color=color, lw=0.8)
+        capped = (f_pos - s < f_pos / cap) | (f_pos + s > f_pos * cap)
+        return capped
 
-    x_nuv = xmap(nuv_wl_nm)
-    x_vis = xmap(vis_wl_nm)
-
-    nuv_clip = fill(x_nuv, nuv_f, nuv_s, "tab:blue")
-    vis_clip = fill(x_vis, vis_f, vis_s, "tab:orange")
-
-    ax.plot(x_nuv, nuv_f, color="tab:blue", lw=1.0)
-    ax.plot(x_vis, vis_f, color="tab:orange", lw=1.0)
-    ax.errorbar(xmap(np.array([nir_wl_nm])), [nir_f], yerr=[nir_s], fmt="o", ms=3.6, mfc="white", mec="k",
-                ecolor="0.35", elinewidth=0.8, capsize=1.6, zorder=3)
-
-    ax.axvspan(0, x_nuv_end, color="tab:blue", alpha=0.05, linewidth=0)
+    ax.axvspan(x_nuv_start, x_nuv_end, color="tab:blue", alpha=0.06, linewidth=0)
     ax.axvspan(x_vis_start, x_vis_end, color="tab:orange", alpha=0.05, linewidth=0)
-    ax.axvspan(x_nir_start, x_nir_end, color="tab:green", alpha=0.04, linewidth=0)
+    ax.axvspan(x_nir_start, x_nir_end, color="tab:purple", alpha=0.05, linewidth=0)
     ax.axvline(x_nuv_end, color="0.65", lw=0.6)
     ax.axvline(x_vis_start, color="0.65", lw=0.6)
     ax.axvline(x_vis_end, color="0.65", lw=0.6)
     ax.axvline(x_nir_start, color="0.65", lw=0.6)
-
-    ax.text(0.01, 0.985, "NUV", transform=ax.transAxes, fontsize=7.2, color="tab:blue", ha="left", va="top")
-    ax.text(0.44, 0.985, "VIS", transform=ax.transAxes, fontsize=7.2, color="tab:orange", ha="left", va="top")
-    ax.text(0.86, 0.985, "NIR", transform=ax.transAxes, fontsize=7.2, color="tab:green", ha="left", va="top")
-
-    # Mark clipped bins (low-SNR regions).
-    y_strip = np.nanmin(np.r_[nuv_f, vis_f, [nir_f]]) * 0.02
-    if np.isfinite(y_strip) and y_strip > 0:
-        if np.any(nuv_clip):
-            ax.scatter(x_nuv[nuv_clip], np.full(np.sum(nuv_clip), y_strip), s=4, color="tab:red", alpha=0.55, edgecolors="none", zorder=4)
-        if np.any(vis_clip):
-            ax.scatter(x_vis[vis_clip], np.full(np.sum(vis_clip), y_strip), s=4, color="tab:red", alpha=0.55, edgecolors="none", zorder=4)
-
-    # Annotation
-    ha = {"left": "left", "right": "right", "center": "center"}.get(ann_side, "left")
-    x0 = {"left": 0.01, "center": 0.50, "right": 0.99}.get(ann_side, 0.01)
     ax.text(
-        x0,
-        0.02,
-        annotate,
-        transform=ax.transAxes,
-        fontsize=ann_fontsize,
-        ha=ha,
-        va="bottom",
-        bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="0.75", alpha=0.92),
+        x_nuv_start + 0.015 * (x_nuv_end - x_nuv_start),
+        0.96,
+        "NUV",
+        transform=ax.get_xaxis_transform(),
+        fontsize=8,
+        color="tab:blue",
+        ha="left",
+        va="top",
+    )
+    ax.text(
+        x_vis_start + 0.012 * (x_vis_end - x_vis_start),
+        0.96,
+        "VIS",
+        transform=ax.get_xaxis_transform(),
+        fontsize=8,
+        color="tab:orange",
+        ha="left",
+        va="top",
+    )
+    ax.text(
+        x_nir_end - 0.012 * (x_nir_end - x_nir_start),
+        0.96,
+        "NIR phot",
+        transform=ax.get_xaxis_transform(),
+        fontsize=7.5,
+        color="tab:purple",
+        ha="right",
+        va="top",
+        clip_on=True,
+        bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.85),
     )
 
-    ax.set_xlim(0, x_nir_end)
+    ax.text((x_nuv_end + x_vis_start) / 2.0, 0.985, "gap", transform=ax.get_xaxis_transform(), fontsize=7, color="0.45", ha="center", va="top")
+    ax.text((x_vis_end + x_nir_start) / 2.0, 0.985, "gap", transform=ax.get_xaxis_transform(), fontsize=7, color="0.45", ha="center", va="top")
+
+    x_nuv = xmap(nuv_wl_nm)
+    x_vis = xmap(vis_wl_nm)
+    nuv_capped = _fill(x_nuv, nuv_flux, nuv_sig, "tab:blue")
+    vis_capped = _fill(x_vis, vis_flux, vis_sig, "tab:orange")
+
+    ax.set_xlim(-0.02, x_nir_end + 0.02)
     ax.set_yscale("log")
-    ax.grid(alpha=0.18)
-    ax.tick_params(axis="both", labelsize=7.5)
+    ax.grid(alpha=0.22)
+
+    yvals = []
+    for f in (nuv_flux, vis_flux):
+        f = np.asarray(f, dtype=float)
+        f = f[np.isfinite(f) & (f > 0)]
+        if len(f):
+            yvals.append(np.nanmin(f))
+            yvals.append(np.nanmax(f))
+    if np.isfinite(nir_flux) and nir_flux > 0:
+        yvals.append(nir_flux)
+    if yvals:
+        y_min = float(np.nanmin(yvals))
+        y_max = float(np.nanmax(yvals))
+        if y_min > 0 and y_max > y_min:
+            ax.set_ylim(y_min * 0.15, y_max * 3.0)
+
+    if np.isfinite(nir_flux) and nir_flux > 0:
+        xpt = float(xmap([nir_wl_nm])[0])
+        ax.errorbar(
+            [xpt],
+            [nir_flux],
+            yerr=[nir_sig] if np.isfinite(nir_sig) else None,
+            fmt="o",
+            ms=3.8,
+            color="tab:purple",
+            ecolor="tab:purple",
+            elinewidth=2.0,
+            capsize=6.0,
+            capthick=1.5,
+            zorder=6,
+        )
+
+    y_strip = 0.02
+    if np.any(nuv_capped):
+        ax.scatter(x_nuv[nuv_capped], np.full(np.sum(nuv_capped), y_strip), s=4, color="tab:red", alpha=0.55,
+                   transform=ax.get_xaxis_transform(), linewidths=0)
+    if np.any(vis_capped):
+        ax.scatter(x_vis[vis_capped], np.full(np.sum(vis_capped), y_strip), s=4, color="tab:red", alpha=0.55,
+                   transform=ax.get_xaxis_transform(), linewidths=0)
+
+    tick_nm = [240, 320, 425, 600, 797, 900, 1250, 1600]
+    xt = [float(xmap([t])[0]) for t in tick_nm]
+    ax.set_xticks(xt)
+    labels = ax.set_xticklabels([str(t) for t in tick_nm], fontsize=8)
+    for t, lab in zip(tick_nm, labels):
+        if t in (320, 797):
+            lab.set_ha("right")
+            lab.set_fontsize(7)
+        elif t in (425, 900):
+            lab.set_ha("left")
+            lab.set_fontsize(7)
+        else:
+            lab.set_ha("center")
     if not show_xticklabels:
         ax.set_xticklabels([])
         ax.tick_params(axis="x", which="both", length=0)
+
+    if ann_side not in {"left", "right", "center"}:
+        ann_side = "left"
+    if ann_side == "left":
+        ax_x, ax_ha = 0.02, "left"
+    elif ann_side == "right":
+        ax_x, ax_ha = 0.80, "right"
     else:
-        # Provide a few representative wavelength ticks.
-        ticks_nm = np.array([250, 300, 450, 600, 750, 1250], dtype=float)
-        ax.set_xticks(xmap(ticks_nm))
-        ax.set_xticklabels([f"{int(t)}" for t in ticks_nm], fontsize=7.5)
+        ax_x, ax_ha = 0.50, "center"
+    ax.text(
+        ax_x,
+        0.02,
+        annotate,
+        transform=ax.transAxes,
+        ha=ax_ha,
+        va="bottom",
+        fontsize=float(ann_fontsize),
+        clip_on=False,
+        linespacing=1.0,
+        bbox=dict(boxstyle="round,pad=0.16", fc="white", ec="none", alpha=0.9),
+    )
 
 
 def main() -> None:
@@ -443,39 +520,49 @@ def main() -> None:
                 tmax_hours=float(args.tmax_hours),
                 min_show_minutes=float(args.min_show_minutes),
             )
-            tdur_s = t_h * 3600.0
+            tdur_wall_s = t_h * 3600.0
+            eff = float(tso.get("meta", {}).get("efficiency", 1.0))
+            tdur_eff_s = tdur_wall_s * eff
             # Compute binned star spectrum (stare mode) at the tuned time.
             bands, wl, flux, err, widths = simulate_spectrum(
                 tso,
                 obs_type="stare",
                 obs_dur=float(t_h),
                 n_obs=1,
-                efficiency=float(tso["meta"]["efficiency"]),
+                efficiency=eff,
             )
             band_to_idx = {b: k for k, b in enumerate(bands)}
 
-            def band_dict(b: str) -> dict:
+            def band_dict(b: str) -> tuple[dict, np.ndarray, np.ndarray]:
                 k = band_to_idx[b]
                 wl_b = np.asarray(wl[k], dtype=float)
-                flux_b = np.asarray(flux[k], dtype=float)
-                err_b = np.asarray(err[k], dtype=float)
+                # simulate_spectrum(stare) returns collected electrons, throughput-corrected.
+                flux_total = np.asarray(flux[k], dtype=float)
+                err_total = np.asarray(err[k], dtype=float)
                 if args.flux_space == "detected":
-                    flux_b, err_b = _apply_throughput(tso, b, wl_b, flux_b, err_b)
-                return {"wl": wl_b, "flux": flux_b, "err": err_b, "half_widths": np.asarray(widths[k], dtype=float)}
+                    flux_total, err_total = _apply_throughput(tso, b, wl_b, flux_total, err_total)
+                dt = max(float(tdur_eff_s), 1e-9)
+                flux_rate = flux_total / dt
+                var_rate = (err_total**2.0) / dt
+                return (
+                    {"wl": wl_b, "flux": flux_rate, "variance": var_rate, "half_widths": np.asarray(widths[k], dtype=float)},
+                    flux_total,
+                    err_total,
+                )
 
-            nuv = band_dict("nuv")
-            vis = band_dict("vis")
-            nir = band_dict("nir")
+            nuv, nuv_total, nuv_err_total = band_dict("nuv")
+            vis, vis_total, vis_err_total = band_dict("vis")
+            nir, nir_total, nir_err_total = band_dict("nir")
 
-            def med_snr(b: dict) -> float:
-                f = np.asarray(b["flux"], dtype=float)
-                e = np.asarray(b["err"], dtype=float)
+            def med_snr_total(f_total: np.ndarray, e_total: np.ndarray) -> float:
+                f = np.asarray(f_total, dtype=float)
+                e = np.asarray(e_total, dtype=float)
                 m = np.isfinite(f) & np.isfinite(e) & (e > 0)
                 return float(np.nanmedian(f[m] / e[m])) if np.any(m) else float("nan")
 
-            snr_nuv = med_snr(nuv)
-            snr_vis = med_snr(vis)
-            snr_nir = med_snr(nir)
+            snr_nuv = med_snr_total(nuv_total, nuv_err_total)
+            snr_vis = med_snr_total(vis_total, vis_err_total)
+            snr_nir = med_snr_total(nir_total, nir_err_total)
 
             annotate = (
                 f"{name}\n"
@@ -491,13 +578,14 @@ def main() -> None:
                 nuv=nuv,
                 vis=vis,
                 nir=nir,
-                tint_s=float(tso["meta"]["efficiency"]) * tdur_s,
                 annotate=annotate,
                 ann_side=ann_side,
                 sigma_mult=float(args.sigma_mult),
                 shade_alpha=float(args.shade_alpha),
                 show_xticklabels=(i == len(categories) - 1),
                 ann_fontsize=(6.6 if i == 0 else 6.2),
+                # Scale uncertainties with *effective* integration time (duty cycle).
+                tdur_s=tdur_eff_s,
             )
             if i < len(categories) - 1:
                 ax.set_xlabel("")
