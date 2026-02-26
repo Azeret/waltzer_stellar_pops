@@ -1,6 +1,6 @@
-# Reproduce the two proposal figures (stellar science)
+# Reproduce the proposal figures (stellar science)
 
-This folder is intentionally kept minimal: it contains **only** the scripts + inputs needed to reproduce the two figures currently used in the stellar-science theme.
+This folder is intentionally kept minimal: it contains **only** the scripts + inputs needed to reproduce the figures currently used in the stellar-science theme.
 
 ## Figures in use
 
@@ -11,6 +11,9 @@ This folder is intentionally kept minimal: it contains **only** the scripts + in
 2) **All-sky Gaia DR3 density + reachability tiers (A4)**
 - `stellar_science/fig_gaia_allsky_vdist_density_reach_snrproxy_A4.png`
 - `stellar_science/fig_gaia_allsky_vdist_density_reach_snrproxy_A4.pdf`
+3) **All-sky Gaia DR3 young-star density + reachability tiers (A4)**
+- `stellar_science/fig_gaia_young_vdist_density_reach_snrproxy_A4.png`
+- `stellar_science/fig_gaia_young_vdist_density_reach_snrproxy_A4.pdf`
 
 ## Inputs kept for reproducibility
 
@@ -24,6 +27,12 @@ This folder is intentionally kept minimal: it contains **only** the scripts + in
 - `stellar_science/data/gaia_hist_snrproxy/`
   - binned-count query results used by the all-sky density plot
   - if missing, the script will re-query Gaia DR3 via `astroquery`
+
+**Young-star membership input (Figure 3)**
+- `stellar_science/data/young/banyan_members.tsv`
+  - downloaded from VizieR (BANYAN Σ members; `J/ApJ/856/23/members`)
+- `stellar_science/data/young/banyan_members_gaia_dr3_cache.csv`
+  - optional cache produced by the script (crossmatch + Gaia photometry/Teff)
 
 ## Figure 1: ETC spectra by stellar-science category
 
@@ -87,7 +96,25 @@ What “reachable in all bands” means in this figure:
 - We fit an **empirical SNR proxy model** `SNR_band(V, Teff)` to the local ETC merged table (baseline 2.5 h).
 - For each Gaia histogram bin `(distance, V_est, Teff)` we predict baseline SNRs in **NUV, VIS, NIR** and compute
   `t_need = max( t_need_NUV, t_need_VIS, t_need_NIR )` using **S/N ∝ √t**.
-- We then mark bins as reachable within:
+
+## Figure 3: Gaia DR3 young-star density + reachability tiers (≤1 h and ≤5 h)
+
+Script:
+- `stellar_science/gaia_allsky_young_vdist_density_reachability_snrproxy.py`
+
+Run:
+```bash
+python stellar_science/gaia_allsky_young_vdist_density_reachability_snrproxy.py \
+  --etc-merged stellar_science/data/etc/feasibility_phoenix_tdur2p5_nobs1_merged.csv \
+  --out-prefix stellar_science/fig_gaia_young_vdist_density_reach_snrproxy_A4
+```
+
+Notes:
+- “Young” is selected from the literature-based BANYAN Σ membership compilation (Gagné+ 2018; VizieR `J/ApJ/856/23/members`).
+- The two panels show members in associations with approximate ages **≤100 Myr** and **≤10 Myr** (age mapping is encoded in the script).
+- The script crossmatches BANYAN members to Gaia DR3 via the 2MASS best-neighbour table (`gaiadr3.tmass_psc_xsc_best_neighbour`).
+- A small per-member Gaia cache is written to `stellar_science/data/young/banyan_members_gaia_dr3_cache.csv` to speed re-runs (safe to delete).
+- Reachability tiers are computed the same way as Figure 2, using the ETC-trained SNR proxy and assuming **S/N ∝ √t**:
   - **≤1 h** (solid contour)
   - **≤5 h** (dashed contour)
 
